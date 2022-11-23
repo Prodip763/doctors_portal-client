@@ -37,12 +37,24 @@ async function run() {
     try {
         await client.connect();
         const serviceCollection = client.db('doctors_portal').collection('services');
-        const bookingCollection = client.db('doctors_portal').collection('booking');
+        const bookingCollection = client.db('doctors_portal').collection('bookings');
         const userCollection = client.db('doctors_portal').collection('users');
+        const doctorCollection = client.db('doctors_portal').collection('doctors');
+
+        const verifyAdmin = async (req, res, next) => {
+            const initiotor = req.decoded.email;
+            const initiotorAccount = await userCollection.findOne({ email: initiotor });
+            if (initiotorAccount.role === 'admin') {
+                next();
+            }
+            else {
+                res.status(403).send({ message: 'forbidden' });
+            }
+        }
 
         app.get('/service', async (req, res) => {
             const query = {};
-            const cursor = serviceCollection.find(query);
+            const cursor = serviceCollection.find(query).project({ name: 1 });
             const services = await cursor.toArray();
             res.send(services);
         });
@@ -78,7 +90,7 @@ async function run() {
                 const booked = serviceBookings.map(s => s.slot);
                 // service.booked =booked; 
                 // service.booked = serviceBookings.map(s => s.slot);
-                const available = service.slots.filter(s => !booked.includes(s));
+                const available = service.slots.filter(slot => !booked.includes(slot));
                 service.slots = available;
 
             })
@@ -118,30 +130,37 @@ async function run() {
 
         });
 
-        app.put('/user/admin/:email', verifyJWT, async (req, res) => {
+        app.put('/user/admin/:email', verifyJWT,verifyAdmin, async (req, res) => {
             const email = req.params.email;
-            const initiotor = req.decoded.email;
-            const initiotorAccount = await userCollection.findOne({ email: initiotor });
-            if (initiotorAccount.role === 'admin') {
-                const filter = { email: email };
-                const updateDoc = {
-                    $set: { role: 'admin' },
-                };
-                const result = await userCollection.updateOne(filter, updateDoc);
-                res.send({ result });
-            }
-            else{
-                res.status(403).send({message: 'forbidden'});
-            }
-
+            const filter = { email: email };
+            const updateDoc = {
+                $set: { role: 'admin' },
+            };
+            const result = await userCollection.updateOne(filter, updateDoc);
+            res.send({ result });
 
         });
-        app.get('/admin/:email', async(req, res)=>{
+        app.get('/admin/:email', async (req, res) => {
             const email = req.params.email;
-            const user = await userCollection.findOne({email: email});
+            const user = await userCollection.findOne({ email: email });
             const isAdmin = user.role === 'admin';
-            res.send({admin: isAdmin});
-        })
+            res.send({ admin: isAdmin });
+        });
+        app.post('/doctor', verifyJWT, verifyAdmin, async (req, res) => {
+            const doctor = req.body;
+            const result = await doctorCollection.insertOne(doctor);
+            res.send(result);
+        });
+        app.get('/doctor',verifyJWT,verifyAdmin, async(req, res) =>{
+            const doctors = await doctorCollection.find().toArray();
+            res.send(doctors);
+        });
+        app.delete('/doctor/:email', verifyJWT, verifyAdmin, async (req, res) => {
+            const email = req.params.email;
+            const query = {email: email};
+            const result = await doctorCollection.deleteOne(query);
+            res.send(result);
+        });
     }
     finally {
 
