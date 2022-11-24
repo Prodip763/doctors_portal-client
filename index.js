@@ -2,7 +2,8 @@ const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
 const jwt = require('jsonwebtoken');
-const { MongoClient, ServerApiVersion, MongoRuntimeError } = require('mongodb');
+const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY)
+const { MongoClient, ServerApiVersion, MongoRuntimeError, ObjectId } = require('mongodb');
 
 
 const app = express();
@@ -33,6 +34,37 @@ function verifyJWT(req, res, next) {
     });
 }
 
+function sendPaymentConfirmationEmail(booking){
+    const {patient, patientName, treatment, date, slot} = booking;
+
+    var email= {
+        from: process.env.EMAIL_SENDER,
+        to:patient,
+        subject: `We have received your payment for ${treatment} is on ${date} at ${slot} is confirmed`,
+        text: `Your payment for this Appointment ${treatment} is on ${date} at ${slot} is confirmed`,
+        html: `
+            <div>
+                <p>Hello ${patientName} </p>
+                <h3>Thank you for your Payment.</h3>
+                <h3>We have received your payment</h3>
+                <p>Looking forward to seeing you on ${date} at ${slot}.</p>
+                <h3>Our Address</h3>
+                <p>Uttare, Dhake<p>
+                <p>Bangladesh</p>
+                <a href="">Unsubscribe</a>
+            </div>
+        `
+    };
+    emailClient.sendMail(email, function(err, info){
+        if(err){
+            console.log(err)
+        }
+        else{
+            console.log('Message sent:', info);
+        }
+    });
+}
+
 async function run() {
     try {
         await client.connect();
@@ -40,6 +72,7 @@ async function run() {
         const bookingCollection = client.db('doctors_portal').collection('bookings');
         const userCollection = client.db('doctors_portal').collection('users');
         const doctorCollection = client.db('doctors_portal').collection('doctors');
+        const paymentCollection = client.db('doctors_portal').collection('payments');
 
         const verifyAdmin = async (req, res, next) => {
             const initiotor = req.decoded.email;
@@ -160,6 +193,37 @@ async function run() {
             const query = {email: email};
             const result = await doctorCollection.deleteOne(query);
             res.send(result);
+        });
+        app.get('/booking/:id',verifyJWT, async(req, res) =>{
+            const id = req.params.id;
+            const query = {_id: ObjectId(id)};
+            const booking = await bookingCollection.findOne(query);
+            res.send(booking);
+        });
+        app.post('/create-payment-intent',verifyJWT, async(req,res) =>{
+            const service = req.body;
+            const price = service.price;
+            const amount = price*10;
+            const paymentIntent = await stripe.paymentIntents.create({
+                amount: amount,
+                currency: 'usd',
+                payment_method_types:['card']
+            });
+            res.send({ clientSecret: paymentIntent.client_secret})
+        });
+        app.patch('/booking/:id',verifyJWT, async(req,res) =>{
+            const booking = req.params.id;
+            const payment = req.body;
+            const query = {_id: ObjectId(booking)};
+            const updatedDoc= {
+                $set: {
+                    paid: true,
+                    transcationId: payment.transcationId
+                }
+            }
+            const result = await paymentCollection.insertOne(payment);
+            const updatedBooking = await bookingCollection.updateOne(query, updatedDoc);
+            res.send(updatedDoc);
         });
     }
     finally {
